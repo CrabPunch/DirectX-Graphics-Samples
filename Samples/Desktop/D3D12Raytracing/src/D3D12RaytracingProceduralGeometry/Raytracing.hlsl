@@ -90,6 +90,7 @@ float4 CalculatePhongLighting(in float4 albedo, in float3 normal, in bool isInSh
     return ambientColor + diffuseColor + specularColor;
 }
 
+
 //***************************************************************************
 //*****------ TraceRay wrappers for radiance and shadow rays. -------********
 //***************************************************************************
@@ -157,6 +158,45 @@ bool TraceShadowRayAndReportIfHit(in Ray ray, in UINT currentRayRecursionDepth)
     return shadowPayload.hit;
 }
 
+
+#if USE_UTIL_COLOR_FUNCTION
+float4 CalculateColorAtHit(in float3 normal, in UINT currentRecursionDepth)
+{
+    // PERFORMANCE TIP: it is recommended to avoid values carry over across TraceRay() calls. 
+    // Therefore, in cases like retrieving HitWorldPosition(), it is recomputed every time.
+
+    // Shadow component.
+    // Trace a shadow ray.
+    float3 hitPosition = HitWorldPosition();
+    Ray shadowRay = { hitPosition, normalize(g_sceneCB.lightPosition.xyz - hitPosition) };
+    bool shadowRayHit = TraceShadowRayAndReportIfHit(shadowRay, currentRecursionDepth);
+
+    float checkers = AnalyticalCheckersTexture(HitWorldPosition(), normal, g_sceneCB.cameraPosition.xyz, g_sceneCB.projectionToWorld);
+
+    // Reflected component.
+    float4 reflectedColor = float4(0, 0, 0, 0);
+    if (l_materialCB.reflectanceCoef > 0.001)
+    {
+        // Trace a reflection ray.
+        Ray reflectionRay = { HitWorldPosition(), reflect(WorldRayDirection(), normal) };
+        float4 reflectionColor = TraceRadianceRay(reflectionRay, currentRecursionDepth);
+
+        float3 fresnelR = FresnelReflectanceSchlick(WorldRayDirection(), normal, l_materialCB.albedo.xyz);
+        reflectedColor = l_materialCB.reflectanceCoef * float4(fresnelR, 1) * reflectionColor;
+    }
+
+    // Calculate final color.
+    float4 phongColor = CalculatePhongLighting(l_materialCB.albedo, normal, shadowRayHit, l_materialCB.diffuseCoef, l_materialCB.specularCoef, l_materialCB.specularPower);
+    float4 color = checkers * (phongColor + reflectedColor);
+
+    // Apply visibility falloff.
+    float t = RayTCurrent();
+    color = lerp(color, BackgroundColor, 1.0 - exp(-0.000002*t*t*t));
+
+    return color;
+}
+#endif
+
 //***************************************************************************
 //********************------ Ray gen shader.. -------************************
 //***************************************************************************
@@ -193,7 +233,9 @@ void MyClosestHitShader_Triangle(inout RayPayload rayPayload, in BuiltInTriangle
 
     // Retrieve corresponding vertex normals for the triangle vertices.
     float3 triangleNormal = g_vertices[indices[0]].normal;
-
+#if USE_UTIL_COLOR_FUNCTION
+    rayPayload.color = CalculateColorAtHit(triangleNormal, rayPayload.recursionDepth);
+#else
     // PERFORMANCE TIP: it is recommended to avoid values carry over across TraceRay() calls. 
     // Therefore, in cases like retrieving HitWorldPosition(), it is recomputed every time.
 
@@ -226,11 +268,15 @@ void MyClosestHitShader_Triangle(inout RayPayload rayPayload, in BuiltInTriangle
     color = lerp(color, BackgroundColor, 1.0 - exp(-0.000002*t*t*t));
 
     rayPayload.color = color;
+#endif
 }
 
 [shader("closesthit")]
 void MyClosestHitShader_AABB(inout RayPayload rayPayload, in ProceduralPrimitiveAttributes attr)
 {
+#if USE_UTIL_COLOR_FUNCTION
+    rayPayload.color = CalculateColorAtHit(attr.normal, rayPayload.recursionDepth);
+#else
     // PERFORMANCE TIP: it is recommended to minimize values carry over across TraceRay() calls. 
     // Therefore, in cases like retrieving HitWorldPosition(), it is recomputed every time.
 
@@ -261,6 +307,7 @@ void MyClosestHitShader_AABB(inout RayPayload rayPayload, in ProceduralPrimitive
     color = lerp(color, BackgroundColor, 1.0 - exp(-0.000002*t*t*t));
 
     rayPayload.color = color;
+#endif
 }
 
 //***************************************************************************

@@ -55,6 +55,8 @@ typedef UINT16 Index;
 // Fallback Layer does not support default exports for DXIL libraries yet.
 #define DEFINE_EXPLICIT_SHADER_EXPORTS 1
 //
+#define USE_UTIL_COLOR_FUNCTION 1
+//
 //*************************************************************************
 
 
